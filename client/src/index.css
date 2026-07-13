@@ -1051,3 +1051,29 @@ input, textarea, select {
 .glow-accent {
   box-shadow: var(--shadow-glow);
 }
+
+/* Responsive adjustments for mobile screens */
+@media (max-width: 900px) {
+  .split-screen {
+    flex-direction: column;
+    height: auto;
+    overflow-y: auto;
+    gap: 2rem;
+  }
+  .split-pane {
+    height: 75vh;
+    min-height: 580px;
+    flex: none;
+  }
+  .navbar {
+    padding: 0 1rem;
+    height: 60px;
+  }
+  .nav-brand {
+    font-size: 1.15rem;
+  }
+  .badge-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+  }
+}
