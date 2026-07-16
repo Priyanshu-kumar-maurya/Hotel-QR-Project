@@ -4,6 +4,7 @@ import Menu from './components/Menu';
 import Cart from './components/Cart';
 import OrderStatus from './components/OrderStatus';
 import ChefDashboard from './components/ChefDashboard';
+import { BACKEND_URL, WS_URL } from './config';
 
 export default function App() {
   const [view, setView] = useState('simulator'); // simulator, customer, chef, split-screen
@@ -15,7 +16,7 @@ export default function App() {
 
   // Fetch Menu Items from SQLite database
   const fetchMenu = () => {
-    fetch('/api/menu')
+    fetch(`${BACKEND_URL}/api/menu`)
       .then(res => res.json())
       .then(data => setMenuItems(data))
       .catch(err => console.error('Error fetching menu database:', err));
@@ -37,14 +38,11 @@ export default function App() {
     }
   }, []);
 
-  // WebSockets configuration for real-time instant notifications
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socketUrl = `${protocol}//${window.location.host}`;
     let socket;
 
     function connectSocket() {
-      socket = new WebSocket(socketUrl);
+      socket = new WebSocket(WS_URL);
 
       socket.onopen = () => {
         console.log('Successfully connected to WebSocket server');

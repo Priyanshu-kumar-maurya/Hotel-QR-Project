@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BACKEND_URL } from '../config';
 
 export default function Cart({ isOpen, onClose, cart, tableNumber, onUpdateCart, onOrderPlaced }) {
   const [name, setName] = useState('');
@@ -47,7 +48,7 @@ export default function Cart({ isOpen, onClose, cart, tableNumber, onUpdateCart,
     };
 
     try {
-      const response = await fetch('/api/orders', {
+      const response = await fetch(`${BACKEND_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BACKEND_URL } from '../config';
 
 // Web Audio API Synthesizer for notifications
 export function playChimeSound() {
@@ -43,7 +44,7 @@ export default function OrderStatus({ activeOrder, onClearOrder }) {
     if (!activeOrder?.id) return;
 
     // Fetch initial order state to verify sync
-    fetch(`/api/orders`)
+    fetch(`${BACKEND_URL}/api/orders`)
       .then(res => res.json())
       .then(orders => {
         const found = orders.find(o => o.id === activeOrder.id);

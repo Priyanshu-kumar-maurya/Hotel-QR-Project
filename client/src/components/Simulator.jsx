@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { BACKEND_URL } from '../config';
 
 export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenChef }) {
   const [tableNumber, setTableNumber] = useState('5');
@@ -7,7 +8,7 @@ export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenCh
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/ip')
+    fetch(`${BACKEND_URL}/api/ip`)
       .then(res => res.json())
       .then(data => {
         setLocalIp(data.ip);
@@ -21,7 +22,10 @@ export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenCh
   }, []);
 
   const getCustomerUrl = (ipAddress) => {
-    return `http://${ipAddress}:${port}/?table=${tableNumber}`;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return `http://${ipAddress}:${port}/?table=${tableNumber}`;
+    }
+    return `${window.location.origin}/?table=${tableNumber}`;
   };
 
   const getChefUrl = () => {

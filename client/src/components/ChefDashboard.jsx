@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BACKEND_URL } from '../config';
 
 // Rising sound chime for incoming chef orders
 function playNewOrderAlert() {
@@ -43,7 +44,7 @@ export default function ChefDashboard({ menuItems }) {
 
   // Fetch all orders from backend
   const fetchOrders = () => {
-    fetch('/api/orders')
+    fetch(`${BACKEND_URL}/api/orders`)
       .then(res => res.json())
       .then(data => setOrders(data))
       .catch(err => console.error('Error fetching orders:', err));
@@ -75,7 +76,7 @@ export default function ChefDashboard({ menuItems }) {
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
-      const res = await fetch(`/api/orders/${orderId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json'
@@ -107,7 +108,7 @@ export default function ChefDashboard({ menuItems }) {
       image: image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&q=80'
     };
 
-    const url = editingItem ? `/api/menu/${editingItem.id}` : '/api/menu';
+    const url = editingItem ? `${BACKEND_URL}/api/menu/${editingItem.id}` : `${BACKEND_URL}/api/menu`;
     const method = editingItem ? 'PUT' : 'POST';
 
     try {
@@ -146,7 +147,7 @@ export default function ChefDashboard({ menuItems }) {
   const handleDeleteClick = async (itemId) => {
     if (!confirm('Are you sure you want to delete this menu item?')) return;
     try {
-      const res = await fetch(`/api/menu/${itemId}`, {
+      const res = await fetch(`${BACKEND_URL}/api/menu/${itemId}`, {
         method: 'DELETE'
       });
       if (!res.ok) alert('Failed to delete item.');
