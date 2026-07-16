@@ -37,41 +37,46 @@ export function playChimeSound() {
 
 export default function OrderStatus({ activeOrder, onClearOrder }) {
   const [order, setOrder] = useState(activeOrder);
-  const [hasChimed, setHasChimed] = useState(false);
 
-  // Poll server for order updates
   useEffect(() => {
     setOrder(activeOrder);
-    setHasChimed(false);
-    
     if (!activeOrder?.id) return;
 
-    const pollInterval = setInterval(() => {
-      fetch(`/api/orders`)
-        .then(res => res.json())
-        .then(orders => {
-          const updated = orders.find(o => o.id === activeOrder.id);
-          if (updated) {
-            setOrder(updated);
-            
-            // Check if status transitioned to ready and we haven't chimed yet
-            if (updated.status === 'ready' && !hasChimed) {
-              playChimeSound();
-              setHasChimed(true);
-            }
-          }
-        })
-        .catch(err => console.error('Error polling order status:', err));
-    }, 3000);
+    // Fetch initial order state to verify sync
+    fetch(`/api/orders`)
+      .then(res => res.json())
+      .then(orders => {
+        const found = orders.find(o => o.id === activeOrder.id);
+        if (found) setOrder(found);
+      })
+      .catch(err => console.error('Error fetching initial order:', err));
 
-    return () => clearInterval(pollInterval);
-  }, [activeOrder, hasChimed]);
+    // Listen to real-time WebSocket updates via custom window event
+    const handleWsOrderUpdate = (e) => {
+      const updatedOrder = e.detail;
+      if (updatedOrder && updatedOrder.id === activeOrder.id) {
+        setOrder(updatedOrder);
+        
+        // Play success sound instantly when order is marked as ready!
+        if (updatedOrder.status === 'ready') {
+          playChimeSound();
+        }
+      }
+    };
+
+    window.addEventListener('ws:order_update', handleWsOrderUpdate);
+
+    return () => {
+      window.removeEventListener('ws:order_update', handleWsOrderUpdate);
+    };
+  }, [activeOrder]);
 
   const getStepProgress = (status) => {
     switch (status) {
       case 'pending': return '15%';
       case 'preparing': return '50%';
       case 'ready': return '100%';
+      case 'completed': return '100%';
       default: return '15%';
     }
   };
@@ -84,6 +89,8 @@ export default function OrderStatus({ activeOrder, onClearOrder }) {
         return 'Chef is cooking your fresh meal right now!';
       case 'ready':
         return 'Your food is cooked and ready for pick-up / service!';
+      case 'completed':
+        return 'Thank you! Hope you enjoyed your meal.';
       default:
         return 'Placing your order...';
     }
@@ -100,6 +107,7 @@ export default function OrderStatus({ activeOrder, onClearOrder }) {
           {order?.status === 'pending' && '🕒 Placed'}
           {order?.status === 'preparing' && '👨‍🍳 Preparing'}
           {order?.status === 'ready' && '✅ Ready'}
+          {order?.status === 'completed' && '📦 Served'}
         </span>
       </div>
 
@@ -122,13 +130,13 @@ export default function OrderStatus({ activeOrder, onClearOrder }) {
         
         <div className={`step-node ${
           order?.status === 'preparing' ? 'active' : 
-          order?.status === 'ready' ? 'completed' : ''
+          order?.status === 'ready' || order?.status === 'completed' ? 'completed' : ''
         }`}>
           2
           <div className="step-label">Preparing</div>
         </div>
         
-        <div className={`step-node ${order?.status === 'ready' ? 'active completed' : ''}`}>
+        <div className={`step-node ${order?.status === 'ready' || order?.status === 'completed' ? 'active completed' : ''}`}>
           3
           <div className="step-label">Food Ready</div>
         </div>

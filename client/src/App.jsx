@@ -8,12 +8,23 @@ import ChefDashboard from './components/ChefDashboard';
 export default function App() {
   const [view, setView] = useState('simulator'); // simulator, customer, chef, split-screen
   const [tableNumber, setTableNumber] = useState('5');
+  const [menuItems, setMenuItems] = useState([]);
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [activeOrder, setActiveOrder] = useState(null);
 
-  // Parse initial route/query parameters on load
+  // Fetch Menu Items from SQLite database
+  const fetchMenu = () => {
+    fetch('/api/menu')
+      .then(res => res.json())
+      .then(data => setMenuItems(data))
+      .catch(err => console.error('Error fetching menu database:', err));
+  };
+
+  // Initial load and routing
   useEffect(() => {
+    fetchMenu();
+
     const params = new URLSearchParams(window.location.search);
     const tableParam = params.get('table');
     const path = window.location.pathname;
@@ -24,6 +35,55 @@ export default function App() {
     } else if (path === '/chef') {
       setView('chef');
     }
+  }, []);
+
+  // WebSockets configuration for real-time instant notifications
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socketUrl = `${protocol}//${window.location.host}`;
+    let socket;
+
+    function connectSocket() {
+      socket = new WebSocket(socketUrl);
+
+      socket.onopen = () => {
+        console.log('Successfully connected to WebSocket server');
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const { type, data } = JSON.parse(event.data);
+          
+          if (type === 'MENU_UPDATED') {
+            fetchMenu(); // Re-fetch menu items instantly
+          } else if (type === 'NEW_ORDER') {
+            // Dispatch a custom event to notify Chef Dashboard instantly
+            window.dispatchEvent(new CustomEvent('ws:new_order', { detail: data }));
+          } else if (type === 'ORDER_STATUS_UPDATE') {
+            // Dispatch a custom event to notify Order Status Tracker instantly
+            window.dispatchEvent(new CustomEvent('ws:order_update', { detail: data }));
+          }
+        } catch (err) {
+          console.error('Error parsing WS message:', err);
+        }
+      };
+
+      socket.onclose = () => {
+        console.log('WebSocket disconnected. Reconnecting in 3s...');
+        setTimeout(connectSocket, 3000);
+      };
+
+      socket.onerror = (err) => {
+        console.error('WebSocket encountered error:', err);
+        socket.close();
+      };
+    }
+
+    connectSocket();
+
+    return () => {
+      if (socket) socket.close();
+    };
   }, []);
 
   // Update Cart Quantity
@@ -66,7 +126,7 @@ export default function App() {
 
   const totalCartCount = cart.reduce((sum, item) => sum + item.qty, 0);
 
-  // RENDER PURE CUSTOMER VIEW
+  // RENDER CUSTOMER MENU VIEW
   const renderCustomerView = () => {
     if (activeOrder) {
       return (
@@ -88,7 +148,7 @@ export default function App() {
           </button>
         </header>
         
-        <Menu cart={cart} onUpdateCart={handleUpdateCart} />
+        <Menu menuItems={menuItems} cart={cart} onUpdateCart={handleUpdateCart} />
         
         <Cart
           isOpen={cartOpen}
@@ -102,19 +162,19 @@ export default function App() {
     );
   };
 
-  // RENDER PURE CHEF DASHBOARD
+  // RENDER CHEF VIEW
   const renderChefView = () => {
     return (
       <>
         <header className="navbar glass-panel" style={{ borderRadius: '0 0 var(--radius-md) var(--radius-md)', margin: '0 0 1.5rem 0' }}>
           <div className="nav-brand">
-            <span>👨‍🍳 Chef's Kitchen Dashboard</span>
+            <span>👨‍🍳 Store Staff Dashboard</span>
           </div>
           <button onClick={() => setView('simulator')} className="btn-secondary" style={{ padding: '0.4rem 1rem', borderRadius: '20px' }}>
             🔌 Open Simulator
           </button>
         </header>
-        <ChefDashboard />
+        <ChefDashboard menuItems={menuItems} />
       </>
     );
   };
@@ -145,13 +205,13 @@ export default function App() {
         {/* Right Chef Pane */}
         <div className="split-pane">
           <div className="split-pane-header">
-            <span>👨‍🍳 Kitchen Dashboard (Admin View)</span>
+            <span>👨‍🍳 Store Staff Dashboard (Admin View)</span>
             <span style={{ fontSize: '0.75rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.15)', padding: '2px 8px', borderRadius: '10px' }}>
-              🟢 Live Sync
+              ⚡ Realtime WS Active
             </span>
           </div>
           <div className="split-pane-body">
-            <ChefDashboard />
+            <ChefDashboard menuItems={menuItems} />
           </div>
         </div>
       </div>
@@ -166,7 +226,6 @@ export default function App() {
     return <div className="main-content">{renderChefView()}</div>;
   }
 
-  // Fallback to Simulator Setup Landing Page
   return (
     <div className="main-content">
       <Simulator
