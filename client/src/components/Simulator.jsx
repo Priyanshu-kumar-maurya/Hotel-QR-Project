@@ -5,7 +5,7 @@ export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenCh
   const [tableNumber, setTableNumber] = useState('5');
   const [localIp, setLocalIp] = useState('127.0.0.1');
   const [port, setPort] = useState('5000');
-  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/ip`)
@@ -13,12 +13,8 @@ export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenCh
       .then(data => {
         setLocalIp(data.ip);
         setPort(data.port);
-        setLoading(false);
       })
-      .catch(err => {
-        console.error('Error fetching IP:', err);
-        setLoading(false);
-      });
+      .catch(err => console.warn('IP fetch error:', err));
   }, []);
 
   const getCustomerUrl = (ipAddress) => {
@@ -28,82 +24,154 @@ export default function Simulator({ onStartSplitScreen, onOpenCustomer, onOpenCh
     return `${window.location.origin}/?table=${tableNumber}`;
   };
 
-  const getChefUrl = () => {
-    return `http://localhost:${port}/chef`;
-  };
+  const currentCustomerUrl = getCustomerUrl(localIp);
 
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f0e0c&data=${encodeURIComponent(
-    getCustomerUrl(localIp)
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&color=0f0e0c&data=${encodeURIComponent(
+    currentCustomerUrl
   )}`;
 
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(currentCustomerUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
   return (
-    <div className="simulator-container glass-panel">
-      <h1 className="simulator-title">QuickDine Simulator</h1>
-      <p className="simulator-subtitle">Demo Setup for Hotel QR Table-Ordering System</p>
+    <div className="glass-panel" style={{ maxWidth: '640px', margin: '2rem auto', padding: '2.5rem 2rem', textAlign: 'center' }}>
+      {/* Brand Header */}
+      <div style={{ fontSize: '2.5rem', marginBottom: '0.4rem' }}>🍽️</div>
+      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '2.2rem', fontWeight: 800, letterSpacing: '-0.02em', marginBottom: '0.4rem' }}>
+        QuickDine Pro
+      </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '2rem' }}>
+        Modern QR Table Ordering, Instant Kitchen KDS & WhatsApp Sync
+      </p>
 
-      <div className="form-group" style={{ maxWidth: '300px', margin: '0 auto 2rem auto' }}>
-        <label className="form-label">Table Number (Mese ka Number)</label>
-        <input
-          type="number"
-          min="1"
-          max="50"
-          value={tableNumber}
-          onChange={(e) => setTableNumber(e.target.value)}
-          className="form-input"
-          style={{ textAlign: 'center', fontSize: '1.25rem', fontWeight: 'bold' }}
-        />
-      </div>
-
-      <div className="qr-section">
-        <p className="form-label" style={{ textAlign: 'center' }}>
-          Scan QR Code using Mobile Phone (Same Wi-Fi Network):
-        </p>
-        <div className="qr-frame">
-          <img
-            src={qrCodeUrl}
-            alt={`QR Code for Table ${tableNumber}`}
-            style={{ width: '200px', height: '200px', display: 'block' }}
+      {/* Table Selector */}
+      <div style={{ maxWidth: '320px', margin: '0 auto 1.75rem auto' }}>
+        <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.5rem' }}>
+          Table Number (Mese ka Number)
+        </label>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+          {['1', '3', '5', '8', '12'].map(num => (
+            <button
+              key={num}
+              onClick={() => setTableNumber(num)}
+              className="icon-btn"
+              style={{
+                borderColor: tableNumber === num ? 'var(--accent)' : 'var(--border-subtle)',
+                background: tableNumber === num ? 'var(--accent)' : 'var(--bg-card)',
+                color: tableNumber === num ? 'var(--text-inverse)' : 'var(--text-primary)',
+                fontWeight: 800,
+                width: '42px',
+                height: '42px',
+                padding: 0
+              }}
+            >
+              {num}
+            </button>
+          ))}
+          <input
+            type="number"
+            min="1"
+            max="99"
+            value={tableNumber}
+            onChange={(e) => setTableNumber(e.target.value)}
+            className="cart-input-field"
+            style={{ width: '60px', textAlign: 'center', margin: 0, fontWeight: 800 }}
           />
         </div>
-        <div className="qr-ip-notice">
-          <span>🔗</span>
-          <code>{getCustomerUrl(localIp)}</code>
+      </div>
+
+      {/* QR Code Presentation */}
+      <div style={{ margin: '1.5rem 0' }}>
+        <div 
+          style={{ 
+            background: 'white', 
+            padding: '1.25rem', 
+            borderRadius: '20px', 
+            display: 'inline-block',
+            boxShadow: '0 8px 30px var(--accent-glow)'
+          }}
+        >
+          <img 
+            src={qrCodeUrl} 
+            alt={`QR Code for Table ${tableNumber}`} 
+            style={{ width: '200px', height: '200px', display: 'block' }} 
+          />
+        </div>
+
+        <div style={{ marginTop: '1.25rem' }}>
+          <div 
+            onClick={handleCopyLink}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.6rem',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-medium)',
+              padding: '0.55rem 1.25rem',
+              borderRadius: 'var(--radius-full)',
+              cursor: 'pointer',
+              fontSize: '0.85rem'
+            }}
+            title="Click to copy link"
+          >
+            <span>🔗</span>
+            <code style={{ color: 'var(--accent-light)' }}>{currentCustomerUrl}</code>
+            <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.08)', padding: '2px 8px', borderRadius: '10px' }}>
+              {copied ? '✓ Copied!' : 'Copy'}
+            </span>
+          </div>
         </div>
       </div>
 
-      <div className="sim-actions" style={{ maxWidth: '400px', margin: '2rem auto 0 auto' }}>
+      {/* Primary Actions */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', maxWidth: '420px', margin: '2rem auto 0 auto' }}>
         <button
           onClick={() => onStartSplitScreen(tableNumber)}
-          className="btn-primary"
+          className="btn-kitchen-order"
+          style={{ padding: '0.95rem' }}
         >
-          🖥️ Split Screen Demo (Customer + Chef)
+          <span>🖥️</span>
+          <span>Open Split-Screen Interactive Demo</span>
         </button>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
           <button
             onClick={() => onOpenCustomer(tableNumber)}
-            className="btn-secondary"
+            className="icon-btn"
+            style={{ justifyContent: 'center', padding: '0.75rem' }}
           >
-            📱 Customer Menu View
+            📱 Customer View
           </button>
+
           <button
             onClick={() => onOpenChef()}
-            className="btn-secondary"
+            className="icon-btn"
+            style={{ justifyContent: 'center', padding: '0.75rem' }}
           >
-            👨‍🍳 Chef Dashboard
+            👨‍🍳 Kitchen Staff POS
           </button>
         </div>
       </div>
 
-      <div style={{ marginTop: '2.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem', textAlign: 'left' }}>
-        <h4 style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'var(--accent)', marginBottom: '0.5rem' }}>
-          How to test this demo?
+      {/* Explanatory notes */}
+      <div style={{ marginTop: '2.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.5rem', textAlign: 'left', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+        <h4 style={{ color: 'var(--accent-light)', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+          ✨ Quick Demonstration Tips:
         </h4>
-        <ol style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          <li>Select a table number (e.g. 5) above.</li>
-          <li>Click **Split Screen Demo** to open customer and chef dashboards side-by-side in this browser tab.</li>
-          <li>Or scan the QR code above with your mobile phone (ensure phone is on same Wi-Fi) to view the menu on your phone, then order!</li>
-        </ol>
+        <ul style={{ paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <li>
+            <strong>Split Screen Mode</strong>: Opens both Customer Phone & Kitchen Staff dashboards side-by-side in real-time.
+          </li>
+          <li>
+            <strong>Phone Camera Scan</strong>: Scan the QR code above with any mobile camera (connected to Wi-Fi) to experience it like a real guest.
+          </li>
+          <li>
+            <strong>Real-time WebSockets</strong>: Placing an order instantly plays an audible bell chime in the staff dashboard with zero delay!
+          </li>
+        </ul>
       </div>
     </div>
   );

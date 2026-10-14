@@ -1,46 +1,62 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { BACKEND_URL } from '../config';
 
-// Rising sound chime for incoming chef orders
-function playNewOrderAlert() {
+// Safe Web Audio chime for Kitchen Staff
+function playStaffAudioAlert(type = 'order') {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return;
     const ctx = new AudioContext();
+    if (ctx.state === 'suspended') ctx.resume();
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    
-    osc.type = 'triangle';
     osc.connect(gain);
     gain.connect(ctx.destination);
-    
-    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-    osc.frequency.exponentialRampToValueAtTime(880.00, ctx.currentTime + 0.2); // A5
-    
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
-    
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.45);
-  } catch (error) {
-    console.error('Audio could not be played:', error);
+
+    if (type === 'service') {
+      // 2 quick high beeps for waiter/water call
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } else {
+      // Rising melodic chime for new incoming order
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880.00, ctx.currentTime + 0.25);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    }
+  } catch (err) {
+    console.warn('Audio alert blocked:', err);
   }
 }
 
 export default function ChefDashboard({ menuItems }) {
   const [orders, setOrders] = useState([]);
-  const [activeTab, setActiveTab] = useState('live'); // live, menu, reports
-  
-  // Menu Editor Form State
-  const [editingItem, setEditingItem] = useState(null); // null if adding new
+  const [activeTab, setActiveTab] = useState('live'); // 'live', 'menu', 'reports', 'qr-stand'
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [serviceAlerts, setServiceAlerts] = useState([]);
+
+  // Menu Editor state
+  const [editingItem, setEditingItem] = useState(null);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Starters');
   const [price, setPrice] = useState('');
   const [isVeg, setIsVeg] = useState(true);
   const [isSpicy, setIsSpicy] = useState(false);
+  const [isBestseller, setIsBestseller] = useState(false);
   const [desc, setDesc] = useState('');
   const [image, setImage] = useState('');
   const [submittingMenu, setSubmittingMenu] = useState(false);
+
+  // Standee QR table selector
+  const [standTable, setStandTable] = useState('5');
 
   // Fetch all orders from backend
   const fetchOrders = () => {
@@ -53,34 +69,39 @@ export default function ChefDashboard({ menuItems }) {
   useEffect(() => {
     fetchOrders();
 
-    // Listen to live WebSocket events via custom window events
     const handleNewOrder = (e) => {
       const newOrder = e.detail;
-      setOrders(prev => [newOrder, ...prev]);
-      playNewOrderAlert(); // Play chime instantly!
+      setOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id)]);
+      if (soundEnabled) playStaffAudioAlert('order');
     };
 
     const handleOrderUpdate = (e) => {
-      const updatedOrder = e.detail;
-      setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+      const updated = e.detail;
+      setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+    };
+
+    const handleServiceCall = (e) => {
+      const alertData = e.detail;
+      setServiceAlerts(prev => [alertData, ...prev]);
+      if (soundEnabled) playStaffAudioAlert('service');
     };
 
     window.addEventListener('ws:new_order', handleNewOrder);
     window.addEventListener('ws:order_update', handleOrderUpdate);
+    window.addEventListener('ws:service_call', handleServiceCall);
 
     return () => {
       window.removeEventListener('ws:new_order', handleNewOrder);
       window.removeEventListener('ws:order_update', handleOrderUpdate);
+      window.removeEventListener('ws:service_call', handleServiceCall);
     };
-  }, []);
+  }, [soundEnabled]);
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
       if (res.ok) {
@@ -88,14 +109,28 @@ export default function ChefDashboard({ menuItems }) {
         setOrders(prev => prev.map(o => o.id === orderId ? data : o));
       }
     } catch (err) {
-      console.error('Error updating order status:', err);
+      console.error('Error updating order:', err);
     }
   };
 
-  // Manage Menu item actions (CRUD)
+  // Toggle item in stock / sold out
+  const toggleItemStock = async (itemId) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/menu/${itemId}/toggle-stock`, {
+        method: 'PATCH'
+      });
+      if (res.ok) {
+        // Dispatched via WS automatically
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Save / Edit Menu Item
   const handleSaveMenuItem = async (e) => {
     e.preventDefault();
-    if (!name || !price) return;
+    if (!name || price === '') return;
     setSubmittingMenu(true);
 
     const bodyData = {
@@ -104,8 +139,9 @@ export default function ChefDashboard({ menuItems }) {
       price: Number(price),
       isVeg,
       isSpicy,
+      isBestseller,
       desc,
-      image: image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&q=80'
+      image: image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&q=80'
     };
 
     const url = editingItem ? `${BACKEND_URL}/api/menu/${editingItem.id}` : `${BACKEND_URL}/api/menu`;
@@ -114,20 +150,16 @@ export default function ChefDashboard({ menuItems }) {
     try {
       const res = await fetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData)
       });
-
       if (res.ok) {
-        // Clear fields
         resetMenuForm();
       } else {
-        alert('Failed to save menu item.');
+        alert('Could not save dish.');
       }
     } catch (err) {
-      console.error('Error saving menu item:', err);
+      console.error('Save error:', err);
     } finally {
       setSubmittingMenu(false);
     }
@@ -140,19 +172,17 @@ export default function ChefDashboard({ menuItems }) {
     setPrice(item.price);
     setIsVeg(item.isVeg);
     setIsSpicy(item.isSpicy);
-    setDesc(item.desc);
-    setImage(item.image);
+    setIsBestseller(item.isBestseller || false);
+    setDesc(item.desc || '');
+    setImage(item.image || '');
   };
 
   const handleDeleteClick = async (itemId) => {
-    if (!confirm('Are you sure you want to delete this menu item?')) return;
+    if (!confirm('Are you sure you want to remove this dish from the menu?')) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/api/menu/${itemId}`, {
-        method: 'DELETE'
-      });
-      if (!res.ok) alert('Failed to delete item.');
+      await fetch(`${BACKEND_URL}/api/menu/${itemId}`, { method: 'DELETE' });
     } catch (err) {
-      console.error('Error deleting item:', err);
+      console.error(err);
     }
   };
 
@@ -163,208 +193,330 @@ export default function ChefDashboard({ menuItems }) {
     setPrice('');
     setIsVeg(true);
     setIsSpicy(false);
+    setIsBestseller(false);
     setDesc('');
     setImage('');
   };
 
-  // Filter orders by status
+  // Order filters
   const pendingOrders = orders.filter(o => o.status === 'pending');
   const preparingOrders = orders.filter(o => o.status === 'preparing');
   const readyOrders = orders.filter(o => o.status === 'ready');
   const completedOrders = orders.filter(o => o.status === 'completed');
 
-  // Stats
-  const totalSales = orders
-    .filter(o => o.status === 'completed')
-    .reduce((sum, o) => sum + o.totalAmount, 0);
-
-  const servedCount = completedOrders.length;
   const activeCount = pendingOrders.length + preparingOrders.length + readyOrders.length;
+  const servedCount = completedOrders.length;
+  const totalSales = completedOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
 
-  const getElapsedTime = (isoString) => {
-    const elapsedMs = Date.now() - new Date(isoString).getTime();
-    const elapsedMins = Math.floor(elapsedMs / 60000);
-    if (elapsedMins < 1) return 'Just now';
-    return `${elapsedMins}m ago`;
+  const getElapsedTimeInfo = (isoString) => {
+    const elapsedMins = Math.floor((Date.now() - new Date(isoString).getTime()) / 60000);
+    if (elapsedMins < 1) return { text: 'Just now', alertLevel: 'normal' };
+    if (elapsedMins < 8) return { text: `${elapsedMins}m ago`, alertLevel: 'normal' };
+    if (elapsedMins < 15) return { text: `${elapsedMins}m ago`, alertLevel: 'warning' };
+    return { text: `⚠️ ${elapsedMins}m ago`, alertLevel: 'urgent' };
   };
 
   return (
     <div className="chef-container">
-      {/* Tab Selectors */}
-      <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.8rem', marginBottom: '1.5rem' }}>
-        <button 
-          onClick={() => setActiveTab('live')} 
-          className={`category-pill ${activeTab === 'live' ? 'active' : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          ⚡ Live Orders <span style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '10px', fontSize: '0.75rem' }}>{activeCount}</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('menu')} 
-          className={`category-pill ${activeTab === 'menu' ? 'active' : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          📝 Menu Editor
-        </button>
-        <button 
-          onClick={() => setActiveTab('reports')} 
-          className={`category-pill ${activeTab === 'reports' ? 'active' : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          📊 Sales Reports <span style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '10px', fontSize: '0.75rem' }}>{servedCount}</span>
-        </button>
+      {/* Staff Dashboard Top Bar */}
+      <div className="chef-top-bar">
+        <div className="chef-tabs">
+          <button 
+            onClick={() => setActiveTab('live')} 
+            className={`chef-tab-btn ${activeTab === 'live' ? 'active' : ''}`}
+          >
+            <span>⚡ Kitchen KDS</span>
+            <span style={{ background: 'rgba(0,0,0,0.3)', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem' }}>
+              {activeCount}
+            </span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('menu')} 
+            className={`chef-tab-btn ${activeTab === 'menu' ? 'active' : ''}`}
+          >
+            <span>📋 Menu & Stock</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('reports')} 
+            className={`chef-tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
+          >
+            <span>📊 Sales Reports</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('qr-stand')} 
+            className={`chef-tab-btn ${activeTab === 'qr-stand' ? 'active' : ''}`}
+          >
+            <span>🖨️ Table QR Stand</span>
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button 
+            onClick={() => {
+              setSoundEnabled(!soundEnabled);
+              if (!soundEnabled) playStaffAudioAlert('order');
+            }} 
+            className="icon-btn"
+            style={{ borderColor: soundEnabled ? 'var(--accent)' : 'var(--border-subtle)' }}
+            title="Toggle Kitchen Sound Alerts"
+          >
+            {soundEnabled ? '🔔 Sound: ON' : '🔕 Sound: OFF'}
+          </button>
+        </div>
       </div>
 
+      {/* Service Assistance Alert Banner */}
+      {serviceAlerts.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {serviceAlerts.map((alert, idx) => (
+            <div 
+              key={idx}
+              style={{
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(217, 119, 6, 0.2) 100%)',
+                border: '1px solid var(--accent)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '0.75rem 1.25rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                animation: 'slide-up-bar 0.3s ease'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{ fontSize: '1.25rem' }}>🛎️</span>
+                <div>
+                  <strong style={{ color: 'var(--accent-light)' }}>Table {alert.tableNumber}</strong> requires assistance: 
+                  <span style={{ textTransform: 'capitalize', fontWeight: 600, marginLeft: '0.3rem' }}>{alert.type}</span>
+                  {alert.note && <span style={{ color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({alert.note})</span>}
+                </div>
+              </div>
+              <button 
+                onClick={() => setServiceAlerts(prev => prev.filter((_, i) => i !== idx))}
+                className="icon-btn"
+                style={{ fontSize: '0.75rem', padding: '3px 10px' }}
+              >
+                Dismiss ✓
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ---------------------------------------------------- */}
-      {/* TAB: LIVE KANBAN BOARD */}
+      {/* TAB 1: KITCHEN DISPLAY SYSTEM (KDS KANBAN) */}
       {/* ---------------------------------------------------- */}
       {activeTab === 'live' && (
         <>
-          <div className="chef-header-stats">
-            <div className="stat-card glass-panel">
-              <div className="stat-num">{activeCount}</div>
-              <div className="stat-label">Active Orders</div>
+          <div className="chef-stats-grid">
+            <div className="stat-box">
+              <span className="stat-box-val">{activeCount}</span>
+              <span className="stat-box-lbl">Active Orders</span>
             </div>
-            <div className="stat-card glass-panel">
-              <div className="stat-num">{servedCount}</div>
-              <div className="stat-label">Served Orders</div>
+            <div className="stat-box">
+              <span className="stat-box-val">{servedCount}</span>
+              <span className="stat-box-lbl">Orders Served</span>
             </div>
-            <div className="stat-card glass-panel">
-              <div className="stat-num">₹{totalSales}</div>
-              <div className="stat-label">Total Revenue</div>
+            <div className="stat-box">
+              <span className="stat-box-val">₹{totalSales}</span>
+              <span className="stat-box-lbl">Today's Sales</span>
             </div>
-            <div className="stat-card glass-panel" style={{ cursor: 'pointer' }} onClick={playNewOrderAlert}>
-              <div className="stat-num" style={{ fontSize: '1.25rem', paddingTop: '0.4rem' }}>🔊 Bell Check</div>
-              <div className="stat-label">Test Audio Chime</div>
+            <div className="stat-box" style={{ cursor: 'pointer' }} onClick={() => playStaffAudioAlert('order')}>
+              <span className="stat-box-val" style={{ fontSize: '1.4rem', paddingTop: '0.2rem' }}>🔊 Bell Test</span>
+              <span className="stat-box-lbl">Test Chime</span>
             </div>
           </div>
 
-          <div className="kanban-board">
-            {/* PENDING COLUMN */}
-            <div className="kanban-col col-pending">
-              <div className="kanban-col-header">
-                <h3 className="kanban-col-title">🕒 New Orders</h3>
-                <span className="kanban-col-count">{pendingOrders.length}</span>
+          <div className="kanban-grid">
+            {/* COLUMN 1: NEW INCOMING ORDERS */}
+            <div className="kanban-column new-orders">
+              <div className="kanban-header">
+                <h3 className="kanban-col-title">
+                  <span>🕒</span>
+                  <span>New Orders</span>
+                </h3>
+                <span className="pill-badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--accent-light)' }}>
+                  {pendingOrders.length}
+                </span>
               </div>
-              <div className="kanban-col-content">
-                {pendingOrders.map(order => (
-                  <div key={order.id} className="order-card">
-                    <div className="order-card-header">
-                      <span className="order-card-table">Table {order.tableNumber}</span>
-                      <span className="order-card-time">{getElapsedTime(order.createdAt)}</span>
-                    </div>
-                    <div className="order-card-cust">Customer: {order.customerName}</div>
-                    <div className="order-card-items">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="order-card-item">
-                          <span>{item.name}</span>
-                          <span className="order-card-qty">&times; {item.qty}</span>
+
+              <div className="kanban-cards-wrap">
+                {pendingOrders.map(order => {
+                  const timeInfo = getElapsedTimeInfo(order.createdAt);
+                  return (
+                    <div key={order.id} className="kds-card">
+                      <div className="kds-card-head">
+                        <span className="kds-table-badge">Table {order.tableNumber}</span>
+                        <span className={`kds-timer ${timeInfo.alertLevel}`}>
+                          {timeInfo.text}
+                        </span>
+                      </div>
+
+                      <div className="kds-card-cust">
+                        Guest: <strong>{order.customerName}</strong>
+                      </div>
+
+                      <div className="kds-items-list">
+                        {order.items.map((item, idx) => (
+                          <div key={idx} className="kds-item-row">
+                            <span>
+                              <span className="kds-item-qty">{item.qty}x</span>
+                              {item.name}
+                            </span>
+                            <span style={{ color: 'var(--text-muted)' }}>₹{item.price * item.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {order.specialInstructions && (
+                        <div className="kds-note">
+                          Note: "{order.specialInstructions}"
                         </div>
-                      ))}
+                      )}
+
+                      <div className="kds-actions-row">
+                        <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
+                          ₹{order.totalAmount}
+                        </span>
+                        <button
+                          onClick={() => updateOrderStatus(order.id, 'preparing')}
+                          className="btn-kds-action cook"
+                        >
+                          Accept & Cook 🍳
+                        </button>
+                      </div>
                     </div>
-                    {order.specialInstructions && (
-                      <div className="order-card-notes">Note: "{order.specialInstructions}"</div>
-                    )}
-                    <div className="order-card-footer">
-                      <span className="order-card-price">₹{order.totalAmount}</span>
-                      <button
-                        onClick={() => updateOrderStatus(order.id, 'preparing')}
-                        className="order-action-btn prepare-btn"
-                      >
-                        Accept & Cook 👨‍🍳
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+
                 {pendingOrders.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-muted)' }}>
-                    No new orders.
+                  <div style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text-muted)' }}>
+                    No new orders pending.
                   </div>
                 )}
               </div>
             </div>
 
-            {/* PREPARING COLUMN */}
-            <div className="kanban-col col-preparing">
-              <div className="kanban-col-header">
-                <h3 className="kanban-col-title">🍳 In Kitchen</h3>
-                <span className="kanban-col-count">{preparingOrders.length}</span>
+            {/* COLUMN 2: IN PREPARATION */}
+            <div className="kanban-column cooking">
+              <div className="kanban-header">
+                <h3 className="kanban-col-title">
+                  <span>🍳</span>
+                  <span>Cooking</span>
+                </h3>
+                <span className="pill-badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: 'var(--info)' }}>
+                  {preparingOrders.length}
+                </span>
               </div>
-              <div className="kanban-col-content">
-                {preparingOrders.map(order => (
-                  <div key={order.id} className="order-card" style={{ borderLeft: '3px solid var(--info)' }}>
-                    <div className="order-card-header">
-                      <span className="order-card-table">Table {order.tableNumber}</span>
-                      <span className="order-card-time">{getElapsedTime(order.updatedAt)}</span>
-                    </div>
-                    <div className="order-card-cust">Customer: {order.customerName}</div>
-                    <div className="order-card-items">
-                      {order.items.map((item, idx) => (
-                        <div key={idx} className="order-card-item">
-                          <span>{item.name}</span>
-                          <span className="order-card-qty">&times; {item.qty}</span>
+
+              <div className="kanban-cards-wrap">
+                {preparingOrders.map(order => {
+                  const timeInfo = getElapsedTimeInfo(order.updatedAt);
+                  return (
+                    <div key={order.id} className="kds-card" style={{ borderLeft: '3px solid var(--info)' }}>
+                      <div className="kds-card-head">
+                        <span className="kds-table-badge">Table {order.tableNumber}</span>
+                        <span className={`kds-timer ${timeInfo.alertLevel}`}>
+                          {timeInfo.text}
+                        </span>
+                      </div>
+
+                      <div className="kds-card-cust">
+                        Guest: <strong>{order.customerName}</strong>
+                      </div>
+
+                      <div className="kds-items-list">
+                        {order.items.map((item, idx) => (
+                          <div key={idx} className="kds-item-row">
+                            <span>
+                              <span className="kds-item-qty">{item.qty}x</span>
+                              {item.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {order.specialInstructions && (
+                        <div className="kds-note">
+                          Note: "{order.specialInstructions}"
                         </div>
-                      ))}
+                      )}
+
+                      <div className="kds-actions-row">
+                        <button
+                          onClick={() => updateOrderStatus(order.id, 'ready')}
+                          className="btn-kds-action ready"
+                          style={{ width: '100%' }}
+                        >
+                          Mark Food Ready 🔔
+                        </button>
+                      </div>
                     </div>
-                    {order.specialInstructions && (
-                      <div className="order-card-notes">Note: "{order.specialInstructions}"</div>
-                    )}
-                    <div className="order-card-footer">
-                      <span className="order-card-price">₹{order.totalAmount}</span>
-                      <button
-                        onClick={() => updateOrderStatus(order.id, 'ready')}
-                        className="order-action-btn ready-btn"
-                      >
-                        Mark as Ready ✅
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+
                 {preparingOrders.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-muted)' }}>
-                    No cooking in progress.
+                  <div style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text-muted)' }}>
+                    No food currently cooking.
                   </div>
                 )}
               </div>
             </div>
 
-            {/* READY COLUMN */}
-            <div className="kanban-col col-ready">
-              <div className="kanban-col-header">
-                <h3 className="kanban-col-title">🔔 Ready to Serve</h3>
-                <span className="kanban-col-count">{readyOrders.length}</span>
+            {/* COLUMN 3: READY TO SERVE */}
+            <div className="kanban-column ready">
+              <div className="kanban-header">
+                <h3 className="kanban-col-title">
+                  <span>🔔</span>
+                  <span>Ready to Serve</span>
+                </h3>
+                <span className="pill-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-light)' }}>
+                  {readyOrders.length}
+                </span>
               </div>
-              <div className="kanban-col-content">
+
+              <div className="kanban-cards-wrap">
                 {readyOrders.map(order => (
-                  <div key={order.id} className="order-card" style={{ borderLeft: '3px solid var(--success)' }}>
-                    <div className="order-card-header">
-                      <span className="order-card-table">Table {order.tableNumber}</span>
-                      <span className="order-card-time">{getElapsedTime(order.updatedAt)}</span>
+                  <div key={order.id} className="kds-card" style={{ borderLeft: '3px solid var(--success)' }}>
+                    <div className="kds-card-head">
+                      <span className="kds-table-badge">Table {order.tableNumber}</span>
+                      <span className="pill-badge" style={{ background: 'rgba(16, 185, 129, 0.2)', color: 'var(--success-light)' }}>
+                        Ready
+                      </span>
                     </div>
-                    <div className="order-card-cust">Customer: {order.customerName}</div>
-                    <div className="order-card-items">
+
+                    <div className="kds-card-cust">
+                      Guest: <strong>{order.customerName}</strong>
+                    </div>
+
+                    <div className="kds-items-list">
                       {order.items.map((item, idx) => (
-                        <div key={idx} className="order-card-item">
-                          <span>{item.name}</span>
-                          <span className="order-card-qty">&times; {item.qty}</span>
+                        <div key={idx} className="kds-item-row">
+                          <span>
+                            <span className="kds-item-qty">{item.qty}x</span>
+                            {item.name}
+                          </span>
                         </div>
                       ))}
                     </div>
-                    <div className="order-card-footer" style={{ marginTop: '1rem' }}>
-                      <span className="order-card-price">₹{order.totalAmount}</span>
+
+                    <div className="kds-actions-row" style={{ marginTop: '0.8rem' }}>
                       <button
                         onClick={() => updateOrderStatus(order.id, 'completed')}
-                        className="order-action-btn"
-                        style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        className="btn-kds-action serve"
+                        style={{ width: '100%' }}
                       >
-                        Serve & Archive 📦
+                        Delivered & Clear 📦
                       </button>
                     </div>
                   </div>
                 ))}
+
                 {readyOrders.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-muted)' }}>
-                    No orders ready.
+                  <div style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text-muted)' }}>
+                    No orders waiting to be served.
                   </div>
                 )}
               </div>
@@ -374,37 +526,41 @@ export default function ChefDashboard({ menuItems }) {
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* TAB: MENU MANAGER EDITOR */}
+      {/* TAB 2: MENU MANAGER & LIVE STOCK CONTROL */}
       {/* ---------------------------------------------------- */}
       {activeTab === 'menu' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '1.5rem' }}>
-          {/* Add/Edit Form Panel */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) 2fr', gap: '1.5rem' }}>
+          {/* Add / Edit Form */}
           <div className="glass-panel" style={{ padding: '1.5rem', height: 'fit-content' }}>
-            <h3 style={{ marginBottom: '1.2rem', fontFamily: 'var(--font-body)', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
-              {editingItem ? '✏️ Edit Menu Item' : '➕ Add Menu Item'}
+            <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', fontSize: '1.2rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
+              {editingItem ? '✏️ Edit Dish' : '➕ Add New Dish'}
             </h3>
-            
+
             <form onSubmit={handleSaveMenuItem}>
-              <div className="form-group">
-                <label className="form-label">Dish Name</label>
+              <div style={{ marginBottom: '0.8rem' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.3rem' }}>
+                  Dish Title
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. Paneer Pasanda"
+                  placeholder="e.g. Tandoori Soya Chaap"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="form-input"
+                  className="cart-input-field"
                   required
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Category</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.8rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.3rem' }}>
+                    Category
+                  </label>
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
-                    className="form-input"
-                    style={{ background: 'var(--bg-tertiary)' }}
+                    className="cart-input-field"
+                    style={{ background: 'var(--bg-surface)' }}
                   >
                     <option value="Starters">Starters</option>
                     <option value="Mains">Mains</option>
@@ -413,79 +569,94 @@ export default function ChefDashboard({ menuItems }) {
                   </select>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Price (₹)</label>
+                <div>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.3rem' }}>
+                    Price (₹)
+                  </label>
                   <input
                     type="number"
-                    placeholder="Price in Rs"
+                    placeholder="250"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
-                    className="form-input"
+                    className="cart-input-field"
                     required
                   />
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '1.5rem', margin: '1rem 0' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', gap: '1rem', margin: '0.8rem 0', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.85rem' }}>
                   <input
                     type="checkbox"
                     checked={isVeg}
                     onChange={(e) => setIsVeg(e.target.checked)}
-                    style={{ accentColor: 'var(--success)', width: '16px', height: '16px' }}
+                    style={{ accentColor: '#10b981', width: 16, height: 16 }}
                   />
                   <span>🟢 Veg</span>
                 </label>
 
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.85rem' }}>
                   <input
                     type="checkbox"
                     checked={isSpicy}
                     onChange={(e) => setIsSpicy(e.target.checked)}
-                    style={{ accentColor: 'var(--danger)', width: '16px', height: '16px' }}
+                    style={{ accentColor: '#ef4444', width: 16, height: 16 }}
                   />
                   <span>🌶️ Spicy</span>
                 </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={isBestseller}
+                    onChange={(e) => setIsBestseller(e.target.checked)}
+                    style={{ accentColor: '#f59e0b', width: 16, height: 16 }}
+                  />
+                  <span>⭐ Bestseller</span>
+                </label>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Description</label>
+              <div style={{ marginBottom: '0.8rem' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.3rem' }}>
+                  Description
+                </label>
                 <textarea
-                  placeholder="Enter dish description..."
+                  placeholder="Delicious dish with authentic flavors..."
                   value={desc}
                   onChange={(e) => setDesc(e.target.value)}
-                  className="form-input"
-                  style={{ height: '70px', resize: 'none' }}
+                  className="cart-input-field"
+                  style={{ height: '65px', resize: 'none' }}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Image URL (Optional)</label>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.3rem' }}>
+                  Image URL
+                </label>
                 <input
                   type="text"
                   placeholder="https://images.unsplash.com/..."
                   value={image}
                   onChange={(e) => setImage(e.target.value)}
-                  className="form-input"
-                  style={{ fontSize: '0.85rem' }}
+                  className="cart-input-field"
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
                 <button
                   type="submit"
                   disabled={submittingMenu}
-                  className="btn-primary"
+                  className="btn-kitchen-order"
                   style={{ flex: 1, padding: '0.7rem' }}
                 >
-                  {submittingMenu ? 'Saving...' : editingItem ? 'Update Item' : 'Add Item'}
+                  {submittingMenu ? 'Saving...' : editingItem ? 'Save Changes' : '+ Add Dish'}
                 </button>
                 {editingItem && (
                   <button
                     type="button"
                     onClick={resetMenuForm}
-                    className="btn-secondary"
-                    style={{ padding: '0.7rem' }}
+                    className="icon-btn"
+                    style={{ padding: '0.7rem 1.2rem' }}
                   >
                     Cancel
                   </button>
@@ -494,129 +665,227 @@ export default function ChefDashboard({ menuItems }) {
             </form>
           </div>
 
-          {/* Menu Items List Panel */}
-          <div className="glass-panel" style={{ padding: '1.5rem', maxHeight: '650px', overflowY: 'auto' }}>
-            <h3 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
-              📜 Menu Items list
+          {/* Dishes List with Stock Toggle Switches */}
+          <div className="glass-panel" style={{ padding: '1.5rem', maxHeight: '720px', overflowY: 'auto' }}>
+            <h3 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>📜 Menu Items ({menuItems.length})</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Live Stock Sync</span>
             </h3>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-              {menuItems.map(item => (
-                <div 
-                  key={item.id} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '0.8rem', 
-                    background: 'var(--bg-tertiary)', 
-                    border: '1px solid var(--border)', 
-                    borderRadius: '8px'
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-                    <img 
-                      src={item.image} 
-                      alt={item.name} 
-                      style={{ width: '45px', height: '45px', borderRadius: '4px', objectFit: 'cover' }} 
-                    />
-                    <div>
-                      <h4 style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', fontWeight: 600 }}>
-                        {item.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>({item.category})</span>
-                      </h4>
-                      <div style={{ display: 'flex', gap: '0.4rem', fontSize: '0.75rem', marginTop: '0.1rem' }}>
-                        <span style={{ color: item.isVeg ? '#10b981' : '#ef4444' }}>{item.isVeg ? '🟢 Veg' : '🔴 Non-Veg'}</span>
-                        <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>₹{item.price}</span>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {menuItems.map(item => {
+                const inStock = item.isAvailable !== false;
+                return (
+                  <div 
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '0.85rem 1rem',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      opacity: inStock ? 1 : 0.65
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'center' }}>
+                      <img 
+                        src={item.image} 
+                        alt={item.name} 
+                        style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover' }}
+                      />
+                      <div>
+                        <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>
+                          {item.name}
+                        </h4>
+                        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', marginTop: '0.2rem', alignItems: 'center' }}>
+                          <span style={{ color: item.isVeg ? '#10b981' : '#ef4444' }}>
+                            {item.isVeg ? '🟢 Veg' : '🔴 Non-Veg'}
+                          </span>
+                          <span style={{ color: 'var(--text-muted)' }}>•</span>
+                          <span style={{ color: 'var(--accent-light)', fontWeight: 700 }}>₹{item.price}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>({item.category})</span>
+                        </div>
                       </div>
                     </div>
+
+                    <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                      {/* In Stock / Sold Out Toggle Button */}
+                      <button
+                        onClick={() => toggleItemStock(item.id)}
+                        className="icon-btn"
+                        style={{
+                          fontSize: '0.75rem',
+                          padding: '4px 10px',
+                          background: inStock ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+                          color: inStock ? 'var(--success-light)' : 'var(--danger)',
+                          borderColor: inStock ? 'var(--success)' : 'var(--danger)'
+                        }}
+                      >
+                        {inStock ? '✓ In Stock' : '✕ Sold Out'}
+                      </button>
+
+                      <button
+                        onClick={() => handleEditClick(item)}
+                        className="icon-btn"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(item.id)}
+                        className="icon-btn"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', color: 'var(--danger)' }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button 
-                      onClick={() => handleEditClick(item)} 
-                      style={{ color: 'var(--accent)', padding: '4px 8px', fontSize: '0.85rem', background: 'rgba(234, 179, 8, 0.1)', borderRadius: '4px' }}
-                    >
-                      Edit
-                    </button>
-                    <button 
-                      onClick={() => handleDeleteClick(item.id)} 
-                      style={{ color: 'var(--danger)', padding: '4px 8px', fontSize: '0.85rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '4px' }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* TAB: SALES HISTORY & REPORTS */}
+      {/* TAB 3: SALES REPORTS & ANALYTICS */}
       {/* ---------------------------------------------------- */}
       {activeTab === 'reports' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Revenue Summaries */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem' }}>
-            <div className="stat-card glass-panel">
-              <div className="stat-num">{servedCount}</div>
-              <div className="stat-label">Total Served Orders</div>
+          <div className="chef-stats-grid">
+            <div className="stat-box">
+              <span className="stat-box-val">{servedCount}</span>
+              <span className="stat-box-lbl">Total Completed Orders</span>
             </div>
-            <div className="stat-card glass-panel">
-              <div className="stat-num">₹{totalSales}</div>
-              <div className="stat-label">Total Sales Volume</div>
+            <div className="stat-box">
+              <span className="stat-box-val">₹{totalSales}</span>
+              <span className="stat-box-lbl">Total Gross Revenue</span>
             </div>
-            <div className="stat-card glass-panel">
-              <div className="stat-num">
+            <div className="stat-box">
+              <span className="stat-box-val">
                 ₹{servedCount > 0 ? Math.round(totalSales / servedCount) : 0}
-              </div>
-              <div className="stat-label">Average Ticket Size</div>
+              </span>
+              <span className="stat-box-lbl">Average Ticket Size</span>
             </div>
           </div>
 
-          {/* Past Orders List */}
           <div className="glass-panel" style={{ padding: '1.5rem' }}>
-            <h3 style={{ marginBottom: '1.2rem' }}>📜 Sales Ledger</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <h3 style={{ marginBottom: '1.25rem', fontFamily: 'var(--font-display)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>📜 Completed Sales Ledger</span>
+              <button 
+                onClick={() => window.print()} 
+                className="icon-btn"
+                style={{ fontSize: '0.8rem', padding: '4px 12px' }}
+              >
+                🖨️ Print Ledger
+              </button>
+            </h3>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {completedOrders.map(order => (
                 <div 
-                  key={order.id} 
-                  style={{ 
-                    padding: '1.2rem', 
-                    background: 'var(--bg-tertiary)', 
-                    border: '1px solid var(--border)', 
-                    borderRadius: '8px', 
-                    display: 'flex', 
+                  key={order.id}
+                  style={{
+                    display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    padding: '1rem',
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)'
                   }}
                 >
                   <div>
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                      <span style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--accent)' }}>Table {order.tableNumber}</span>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{getElapsedTime(order.updatedAt)}</span>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <strong style={{ color: 'var(--accent-light)', fontSize: '1rem' }}>
+                        Table {order.tableNumber}
+                      </strong>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {new Date(order.updatedAt).toLocaleTimeString()}
+                      </span>
+                      <span className="pill-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-light)', fontSize: '0.7rem' }}>
+                        COMPLETED
+                      </span>
                     </div>
+
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>
-                      Customer: **{order.customerName}**
+                      Guest: <strong>{order.customerName}</strong>
                     </p>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                      Items: {order.items.map(i => `${i.name} (${i.qty})`).join(', ')}
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      Items: {order.items.map(i => `${i.name} (×${i.qty})`).join(', ')}
                     </p>
                   </div>
+
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--success)' }}>+ ₹{order.totalAmount}</div>
-                    <span style={{ fontSize: '0.75rem', background: 'rgba(16,185,129,0.1)', color: '#34d399', padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase' }}>
-                      Completed
-                    </span>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--success-light)' }}>
+                      + ₹{order.totalAmount}
+                    </div>
                   </div>
                 </div>
               ))}
+
               {completedOrders.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                  No completed sales records yet.
+                <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                  No completed sales records yet for today.
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* TAB 4: TABLE QR STANDEE PRINTABLE GENERATOR */}
+      {/* ---------------------------------------------------- */}
+      {activeTab === 'qr-stand' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <label style={{ fontWeight: 700 }}>Select Table Number:</label>
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={standTable}
+              onChange={(e) => setStandTable(e.target.value)}
+              className="cart-input-field"
+              style={{ width: '80px', textAlign: 'center', margin: 0, fontWeight: 800 }}
+            />
+            <button onClick={() => window.print()} className="icon-btn" style={{ borderColor: 'var(--accent)', color: 'var(--accent-light)' }}>
+              🖨️ Print Standee Card
+            </button>
+          </div>
+
+          {/* Luxury Standee Card Preview */}
+          <div className="qr-standee-preview printable-area">
+            <div style={{ fontSize: '2rem', marginBottom: '0.3rem' }}>🍽️</div>
+            <h2 className="qr-standee-rest">The Grand Gourmet</h2>
+            <p style={{ fontSize: '0.82rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+              Smart Digital Menu & Ordering
+            </p>
+
+            <div className="qr-standee-table-box">
+              TABLE NO. {standTable}
+            </div>
+
+            <div className="qr-standee-code-wrap">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=0f0e0c&data=${encodeURIComponent(
+                  `${window.location.origin}/?table=${standTable}`
+                )}`}
+                alt={`Table ${standTable} QR`}
+                style={{ width: 180, height: 180, display: 'block' }}
+              />
+            </div>
+
+            <p className="qr-standee-inst">
+              📱 <strong>Scan with Phone Camera</strong><br />
+              Browse Menu • Order Food • Instant Kitchen Sync
+            </p>
+
+            <div style={{ marginTop: '1.25rem', paddingTop: '0.8rem', borderTop: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#94a3b8' }}>
+              No App Download Required • Free High-Speed Dining Wi-Fi
             </div>
           </div>
         </div>

@@ -1,0 +1,10 @@
+{
+  "restaurantName": "Gourmet Bistro & Cafe",
+  "tagline": "Fresh Flavors, Served Fast",
+  "whatsappNumber": "919876543210",
+  "currency": "₹",
+  "taxRate": 5,
+  "serviceChargeRate": 0,
+  "enableAudio": true,
+  "estimatedPrepTimeMins": 15
+}

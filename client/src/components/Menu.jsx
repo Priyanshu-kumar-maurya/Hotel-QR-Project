@@ -1,66 +1,111 @@
 import React, { useState } from 'react';
 
-const CATEGORIES = ['All', 'Starters', 'Mains', 'Desserts', 'Beverages'];
+const CATEGORIES = [
+  { id: 'All', label: 'All Items', icon: '🍽️' },
+  { id: 'Starters', label: 'Starters', icon: '🥟' },
+  { id: 'Mains', label: 'Main Course', icon: '🍛' },
+  { id: 'Desserts', label: 'Desserts', icon: '🍨' },
+  { id: 'Beverages', label: 'Beverages', icon: '🥤' }
+];
 
 export default function Menu({ menuItems, cart, onUpdateCart }) {
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [vegOnly, setVegOnly] = useState(false);
+  const [spicyOnly, setSpicyOnly] = useState(false);
+  const [bestsellerOnly, setBestsellerOnly] = useState(false);
 
-  // Filter items based on active category, search query, and veg toggle
+  // Filter items
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          item.desc.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = !searchQuery.trim() || 
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      (item.desc && item.desc.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesVeg = !vegOnly || item.isVeg;
-    return matchesCategory && matchesSearch && matchesVeg;
+    const matchesSpicy = !spicyOnly || item.isSpicy;
+    const matchesBestseller = !bestsellerOnly || item.isBestseller;
+
+    return matchesCategory && matchesSearch && matchesVeg && matchesSpicy && matchesBestseller;
   });
 
   const getCartQty = (itemId) => {
-    const item = cart.find(i => i.id === itemId);
-    return item ? item.qty : 0;
+    const found = cart.find(i => i.id === itemId);
+    return found ? found.qty : 0;
+  };
+
+  const resetFilters = () => {
+    setActiveCategory('All');
+    setSearchQuery('');
+    setVegOnly(false);
+    setSpicyOnly(false);
+    setBestsellerOnly(false);
   };
 
   return (
-    <div>
-      {/* Category Horizontal Slider */}
-      <div className="category-container">
-        {CATEGORIES.map(category => (
-          <button
-            key={category}
-            onClick={() => setActiveCategory(category)}
-            className={`category-pill ${activeCategory === category ? 'active' : ''}`}
-          >
-            {category}
-          </button>
-        ))}
-      </div>
-
-      {/* Search & Filter Row */}
-      <div className="search-filter-row">
-        <div className="search-box">
-          <input
-            type="text"
-            placeholder="🔍 Search delicious dishes..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+    <div className="menu-section">
+      {/* Search and Quick Filter Controls */}
+      <div className="menu-controls">
+        <div className="search-filter-container">
+          <div className="search-input-wrap">
+            <span className="search-icon">🔍</span>
+            <input
+              type="text"
+              placeholder="Search delicious dishes, drinks, desserts..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="modern-search-input"
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="clear-search-btn"
+                title="Clear Search"
+              >
+                &times;
+              </button>
+            )}
+          </div>
         </div>
-        <div className="veg-toggle" onClick={() => setVegOnly(!vegOnly)} style={{ cursor: 'pointer' }}>
-          <span 
-            style={{ 
-              display: 'inline-block', 
-              width: '12px', 
-              height: '12px', 
-              borderRadius: '2px', 
-              border: '2px solid #10b981', 
-              background: vegOnly ? '#10b981' : 'transparent',
-              marginRight: '0.25rem'
-            }}
-          />
-          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: vegOnly ? '#34d399' : 'var(--text-secondary)' }}>
-            Veg Only
-          </span>
+
+        {/* Dietary and Highlights Quick Filter Chips */}
+        <div className="diet-filters">
+          <button
+            onClick={() => setVegOnly(!vegOnly)}
+            className={`filter-chip ${vegOnly ? 'active-veg' : ''}`}
+          >
+            <span className="fssai-indicator veg" style={{ width: 14, height: 14 }} />
+            <span>Veg Only</span>
+          </button>
+
+          <button
+            onClick={() => setBestsellerOnly(!bestsellerOnly)}
+            className={`filter-chip ${bestsellerOnly ? 'active-bestseller' : ''}`}
+          >
+            <span>⭐</span>
+            <span>Bestsellers</span>
+          </button>
+
+          <button
+            onClick={() => setSpicyOnly(!spicyOnly)}
+            className={`filter-chip ${spicyOnly ? 'active-spicy' : ''}`}
+          >
+            <span>🌶️</span>
+            <span>Spicy</span>
+          </button>
+        </div>
+
+        {/* Category Chips Horizontal Bar */}
+        <div className="category-chips-scroll">
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setActiveCategory(cat.id)}
+              className={`category-chip ${activeCategory === cat.id ? 'active' : ''}`}
+            >
+              <span>{cat.icon}</span>
+              <span>{cat.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -68,39 +113,97 @@ export default function Menu({ menuItems, cart, onUpdateCart }) {
       <div className="menu-grid">
         {filteredItems.map(item => {
           const qty = getCartQty(item.id);
+          const isSoldOut = item.isAvailable === false;
+
           return (
-            <div key={item.id} className="menu-card glass-panel">
-              <div className="menu-image-container">
-                <img src={item.image} alt={item.name} className="menu-img" />
-                <div className="menu-tags">
-                  <span className={`tag-badge ${item.isVeg ? 'tag-veg' : 'tag-nonveg'}`}>
-                    {item.isVeg ? 'Veg' : 'Non-Veg'}
+            <div 
+              key={item.id} 
+              className={`food-card ${isSoldOut ? 'sold-out' : ''}`}
+            >
+              {/* Food Image with overlays */}
+              <div className="food-card-img-wrap">
+                <img 
+                  src={item.image} 
+                  alt={item.name} 
+                  className="food-card-img" 
+                  loading="lazy"
+                  onError={(e) => {
+                    e.target.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&q=80';
+                  }}
+                />
+
+                {/* Top Badges */}
+                <div className="food-card-top-badges">
+                  <div className="badge-row-left">
+                    {/* FSSAI Standard Indicator */}
+                    <div className={`fssai-indicator ${item.isVeg ? 'veg' : 'non-veg'}`} title={item.isVeg ? 'Vegetarian' : 'Non-Vegetarian'} />
+                    
+                    {item.isBestseller && (
+                      <span className="pill-badge bestseller-badge">
+                        ⭐ Bestseller
+                      </span>
+                    )}
+                  </div>
+
+                  <span className="pill-badge rating-badge">
+                    ★ {item.rating || '4.8'}
                   </span>
-                  {item.isSpicy ? (
-                    <span className="tag-badge" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid #ef4444' }}>
-                      🌶️ Spicy
-                    </span>
-                  ) : null}
                 </div>
+
+                {/* Sold Out Overlay */}
+                {isSoldOut && (
+                  <div className="sold-out-overlay">
+                    <span className="sold-out-tag">Sold Out</span>
+                  </div>
+                )}
               </div>
 
-              <div className="menu-details">
-                <div className="menu-title-row">
-                  <h3 className="menu-title">{item.name}</h3>
-                  <span className="menu-price">₹{item.price}</span>
+              {/* Food Content Details */}
+              <div className="food-card-body">
+                <div className="food-card-header">
+                  <h3 className="food-title">{item.name}</h3>
+                  <span className="food-price">₹{item.price}</span>
                 </div>
-                <p className="menu-desc">{item.desc}</p>
-                
-                <div className="menu-action">
-                  {qty > 0 ? (
-                    <div className="quantity-control">
-                      <button onClick={() => onUpdateCart(item, qty - 1)} className="qty-btn">-</button>
-                      <span className="qty-val">{qty}</span>
-                      <button onClick={() => onUpdateCart(item, qty + 1)} className="qty-btn">+</button>
+
+                <p className="food-desc" title={item.desc}>
+                  {item.desc || 'Prepared fresh with chef curated spices and premium ingredients.'}
+                </p>
+
+                <div className="food-card-footer">
+                  <span className="prep-time">
+                    ⏱️ {item.prepTime || '10-15m'}
+                  </span>
+
+                  {/* Add / Qty Controls */}
+                  {isSoldOut ? (
+                    <button disabled className="add-btn">
+                      Unavailable
+                    </button>
+                  ) : qty > 0 ? (
+                    <div className="qty-counter-pill">
+                      <button 
+                        onClick={() => onUpdateCart(item, qty - 1)} 
+                        className="qty-ctrl-btn"
+                        aria-label="Decrease quantity"
+                      >
+                        −
+                      </button>
+                      <span className="qty-ctrl-val">{qty}</span>
+                      <button 
+                        onClick={() => onUpdateCart(item, qty + 1)} 
+                        className="qty-ctrl-btn"
+                        aria-label="Increase quantity"
+                      >
+                        +
+                      </button>
                     </div>
                   ) : (
-                    <button onClick={() => onUpdateCart(item, 1)} className="add-cart-btn">
-                      + Add to Cart
+                    <button 
+                      onClick={() => onUpdateCart(item, 1)} 
+                      className="add-btn"
+                    >
+                      <span>+</span>
+                      <span>ADD</span>
                     </button>
                   )}
                 </div>
@@ -110,10 +213,23 @@ export default function Menu({ menuItems, cart, onUpdateCart }) {
         })}
       </div>
 
+      {/* Empty State */}
       {filteredItems.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-          <span style={{ fontSize: '3rem' }}>🍽️</span>
-          <p style={{ marginTop: '1rem', fontSize: '1.1rem' }}>No dishes found matching your selection.</p>
+        <div style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text-secondary)' }}>
+          <div style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>🍽️</div>
+          <h3 style={{ fontSize: '1.25rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+            No matching dishes found
+          </h3>
+          <p style={{ fontSize: '0.9rem', marginBottom: '1.5rem', maxWidth: '340px', margin: '0 auto 1.5rem auto' }}>
+            We couldn't find any dishes matching your current filter or search criteria.
+          </p>
+          <button 
+            onClick={resetFilters} 
+            className="icon-btn"
+            style={{ padding: '0.6rem 1.4rem', borderColor: 'var(--accent)', color: 'var(--accent-light)' }}
+          >
+            Clear Filters & View All Menu
+          </button>
         </div>
       )}
     </div>
