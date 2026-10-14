@@ -69,6 +69,11 @@ export default function ChefDashboard({ menuItems }) {
   useEffect(() => {
     fetchOrders();
 
+    // Polling fallback every 3.5s to ensure zero missed orders
+    const pollInterval = setInterval(() => {
+      fetchOrders();
+    }, 3500);
+
     const handleNewOrder = (e) => {
       const newOrder = e.detail;
       setOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id)]);
@@ -91,6 +96,7 @@ export default function ChefDashboard({ menuItems }) {
     window.addEventListener('ws:service_call', handleServiceCall);
 
     return () => {
+      clearInterval(pollInterval);
       window.removeEventListener('ws:new_order', handleNewOrder);
       window.removeEventListener('ws:order_update', handleOrderUpdate);
       window.removeEventListener('ws:service_call', handleServiceCall);
@@ -98,6 +104,10 @@ export default function ChefDashboard({ menuItems }) {
   }, [soundEnabled]);
 
   const updateOrderStatus = async (orderId, newStatus) => {
+    // 1. Optimistically update local state immediately so kitchen UI reacts instantly!
+    const previousOrders = [...orders];
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updatedAt: new Date().toISOString() } : o));
+
     try {
       const res = await fetch(`${BACKEND_URL}/api/orders/${orderId}`, {
         method: 'PATCH',
@@ -107,9 +117,15 @@ export default function ChefDashboard({ menuItems }) {
       if (res.ok) {
         const data = await res.json();
         setOrders(prev => prev.map(o => o.id === orderId ? data : o));
+      } else {
+        setOrders(previousOrders);
+        const errText = await res.text();
+        alert(`Server Error (${res.status}): Could not update order to ${newStatus}. ${errText}`);
       }
     } catch (err) {
       console.error('Error updating order:', err);
+      setOrders(previousOrders);
+      alert(`Network Error: Could not reach backend server at ${BACKEND_URL}. Check your internet connection.`);
     }
   };
 
@@ -253,7 +269,19 @@ export default function ChefDashboard({ menuItems }) {
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+          <span className="pill-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-light)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+            🟢 Live Sync
+          </span>
+
+          <button 
+            onClick={fetchOrders}
+            className="icon-btn"
+            title="Refresh orders list"
+          >
+            🔄 Refresh
+          </button>
+
           <button 
             onClick={() => {
               setSoundEnabled(!soundEnabled);

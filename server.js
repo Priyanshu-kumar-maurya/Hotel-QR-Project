@@ -241,6 +241,7 @@ function initDb() {
 initDb();
 
 app.use(cors());
+app.options('*', cors());
 app.use(express.json());
 
 // Helper function to get local IP address for QR scanning on mobile
